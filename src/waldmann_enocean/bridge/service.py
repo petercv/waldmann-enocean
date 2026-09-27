@@ -35,6 +35,7 @@ RestartSec=5
 # Raspberry Pi OS.
 DynamicUser=yes
 SupplementaryGroups=dialout
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 # Creates /var/lib/{name} and passes it as $STATE_DIRECTORY, which is where
 # the bridge keeps config.json and devices.json.

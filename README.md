@@ -140,8 +140,9 @@ for why.
 
 ## Web UI
 
-The web UI runs on port 8099 and needs a login. You can change the password
-under **Settings** or with `--web-password`. If you've forgotten it, set a new
+The web UI runs on port 8099 and needs a login. You can change the port under
+**Settings** (port 80 works too), and the password there or with
+`--web-password`. If you've forgotten it, set a new
 one for the service like this:
 
 ```sh
