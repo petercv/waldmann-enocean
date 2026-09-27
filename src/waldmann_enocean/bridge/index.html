@@ -1,0 +1,787 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Waldmann EnOcean bridge</title>
+<style>
+/* Light is the base palette.  The dark tokens are repeated twice on purpose:
+   once for browsers following the system setting, once for an explicit choice
+   from the header, so the toggle wins in both directions. */
+:root{--bg:#f5f6f8;--fg:#1b1d21;--card:#fff;--line:#e2e5ea;--muted:#5f6673;
+--accent:#2563eb;--tx:#2563eb;--ok:#16a34a;--bad:#dc2626}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141619;
+--fg:#e8eaed;--card:#1d2025;--line:#2d3138;--muted:#9aa1ab;--tx:#60a5fa}}
+:root[data-theme="dark"]{--bg:#141619;--fg:#e8eaed;--card:#1d2025;
+--line:#2d3138;--muted:#9aa1ab;--tx:#60a5fa}
+*{box-sizing:border-box}
+body{margin:0;padding:1.5rem 1rem 3rem;background:var(--bg);color:var(--fg);
+font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{max-width:1000px;margin:0 auto}
+h1{font-size:1.2rem;margin:0 0 .25rem}
+.sub{color:var(--muted);font-size:.85rem;margin-bottom:1.25rem}
+.tabs{display:flex;gap:.25rem;border-bottom:1px solid var(--line);margin-bottom:1rem;
+flex-wrap:wrap}
+.tabs button{background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);
+padding:.5rem .85rem;cursor:pointer;font-size:.9rem}
+.tabs button.on{color:var(--fg);border-bottom-color:var(--accent)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+padding:1rem 1.15rem;margin-bottom:1rem}
+h2{font-size:.78rem;margin:0 0 .8rem;color:var(--muted);text-transform:uppercase;
+letter-spacing:.05em;font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:1.5rem}
+.row>div{min-width:8rem}.k{color:var(--muted);font-size:.75rem}
+.v{font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+button.act{background:var(--accent);color:#fff;border:0;border-radius:7px;
+padding:.45rem .85rem;font-size:.85rem;cursor:pointer}
+button.sec{background:transparent;color:var(--fg);border:1px solid var(--line);
+border-radius:7px;padding:.4rem .7rem;font-size:.82rem;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+table{width:100%;border-collapse:collapse}
+td,th{text-align:left;padding:.35rem .5rem;border-bottom:1px solid var(--line);font-size:.83rem}
+th{color:var(--muted);font-weight:500}
+/* tables scroll sideways on a phone instead of widening the page */
+.scroll{overflow-x:auto}
+td.mono{white-space:nowrap}
+input,select{background:var(--bg);color:var(--fg);border:1px solid var(--line);
+border-radius:6px;padding:.4rem .5rem;font-size:.85rem;width:100%}
+label{display:block;margin-bottom:.7rem}
+label span{display:block;color:var(--muted);font-size:.76rem;margin-bottom:.2rem}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:0 1rem}
+pre{background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:.7rem;
+overflow:auto;max-height:18rem;font-size:.76rem;margin:0;
+font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.dot{display:inline-block;width:.55rem;height:.55rem;border-radius:50%;margin-right:.4rem}
+.ok{background:var(--ok)}.bad{background:var(--bad)}
+.hint{color:var(--muted);font-size:.8rem}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem}
+/* label / control / buttons.  A fixed label column, so the rows line up across
+   the separate grids on the EnOcean tab as well as within each one. */
+.cmd{display:grid;grid-template-columns:9rem minmax(8rem,12rem) 1fr;
+gap:.45rem .8rem;align-items:center;max-width:40rem}
+.cmd.raw{grid-template-columns:9rem minmax(8rem,15rem) 1fr}
+.cmd>label{margin:0;color:var(--muted);font-size:.8rem}
+.cmd .btns{display:flex;gap:.4rem;flex-wrap:wrap}
+@media(max-width:560px){.cmd,.cmd.raw{grid-template-columns:1fr}
+  .cmd>label{margin-top:.4rem}}
+.head{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem}
+.tools{display:flex;gap:.6rem;align-items:flex-end}
+.tools label{margin:0}
+.tools select{width:auto}
+.tools button{white-space:nowrap}
+.check{display:flex;align-items:center;gap:.45rem;margin:0 0 .7rem;
+color:var(--muted);font-size:.82rem;cursor:pointer}
+.check input{width:auto;margin:0}
+/* Always on screen and following the form down the page, so it's clear from
+   the start how the settings are saved. */
+.savebar{position:sticky;bottom:1rem;display:flex;align-items:center;
+gap:.6rem;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);
+border-radius:10px;padding:.7rem .9rem;box-shadow:0 6px 20px rgba(0,0,0,.18)}
+.savebar .what{color:var(--muted);font-size:.82rem;flex:1;min-width:0}
+.savebar .msg{flex-basis:100%;margin:0}
+.savebar .msg:empty{display:none}
+.tx{color:var(--tx)}.rx{color:var(--muted)}
+.msg{margin-left:.7rem;font-size:.82rem}
+.note{margin:.7rem 0 0}
+.note:empty{display:none}
+/* the overlay must honour [hidden]; an inline display would override it */
+#login{position:fixed;inset:0;background:var(--bg);z-index:20;padding:1rem;
+display:flex;align-items:center;justify-content:center}
+#login[hidden]{display:none}
+</style>
+<script>
+// Inline and before the body so the chosen theme is in place for the first
+// paint; a stored value is unreadable in some privacy modes, hence the catch.
+function savedTheme() {
+  try { return localStorage.getItem('waldmann-enocean.theme') || 'auto'; } catch (e) { return 'auto'; }
+}
+function applyTheme(value) {
+  const root = document.documentElement;
+  if (value === 'auto') root.removeAttribute('data-theme');
+  else root.setAttribute('data-theme', value);
+}
+applyTheme(savedTheme());
+</script>
+</head>
+<body>
+<div id="login" hidden>
+  <!-- A real method/action and named fields: password managers look for a
+       submitted form with a username and a password, and ignore one that is
+       only wired up in JavaScript. -->
+  <form id="loginform" class="card" method="post" action="/api/login"
+        style="width:min(22rem,100%);margin:0">
+    <div style="font-size:1.05rem;font-weight:600;margin-bottom:.15rem">
+      Waldmann EnOcean bridge</div>
+    <div class="hint" style="margin-bottom:1.1rem">
+      EnOcean D2-41-00 &rarr; MQTT &rarr; Home Assistant</div>
+    <label><span>Username</span><input id="l-user" name="username"
+      autocomplete="username" value="admin" required></label>
+    <label><span>Password</span><input id="l-pass" name="password" type="password"
+      autocomplete="current-password" required></label>
+    <button class="act" type="submit" id="l-submit">Sign in</button>
+    <span class="msg" id="l-note" role="status"></span>
+    <p class="hint" style="margin:.9rem 0 0">First run? The password is in the
+      service log.</p>
+  </form>
+</div>
+<div class="wrap">
+<div class="head">
+  <div>
+    <h1>Waldmann EnOcean bridge</h1>
+    <div class="sub">EnOcean D2-41-00 &rarr; MQTT &rarr; Home Assistant</div>
+  </div>
+  <div class="tools">
+    <label><span>Theme</span><select id="theme">
+      <option value="auto">Auto</option>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option></select></label>
+    <button class="sec" id="logout">Sign out</button>
+  </div>
+</div>
+
+<div class="tabs" role="tablist">
+  <button role="tab" data-tab="status" class="on" aria-selected="true">Status</button>
+  <button role="tab" data-tab="enocean" aria-selected="false">EnOcean</button>
+  <button role="tab" data-tab="mqtt" aria-selected="false">MQTT</button>
+  <button role="tab" data-tab="settings" aria-selected="false">Settings</button>
+</div>
+
+<section id="tab-status" role="tabpanel">
+  <div class="card"><h2>Bridge</h2><div class="row" id="status"></div></div>
+  <div class="card"><h2>Pairing</h2>
+    <p class="hint" style="margin-top:0">Start pairing, then briefly press
+      <b>key C</b> on the wireless module (behind the service flap on the
+      column). The luminaire then shows up in Home Assistant.</p>
+    <button class="act" id="pair">Start pairing</button>
+    <button class="sec" id="pairstop" hidden>Cancel</button>
+    <span class="msg" id="pairnote" role="status"></span>
+  </div>
+  <div class="card"><h2>Activity</h2><pre id="log"></pre></div>
+</section>
+
+<section id="tab-enocean" role="tabpanel" hidden>
+  <div id="devices"></div>
+  <p class="hint note" id="dev-note" role="status" style="margin:0 0 1rem"></p>
+  <div class="card"><h2>Target</h2>
+    <div class="cmd">
+      <label for="d-dev">Luminaire</label>
+      <select id="d-dev"></select><span></span>
+
+      <label for="d-unit">Head</label>
+      <select id="d-unit"><option>0</option></select><span></span>
+    </div>
+    <p class="hint" style="margin:.7rem 0 0">Commands below go to this head.</p>
+  </div>
+  <div class="card"><h2>Send a command</h2>
+    <div class="cmd">
+      <label for="d-get">Request</label>
+      <select id="d-get">
+        <option value="status">Unit status</option>
+        <option value="presence">Presence data</option>
+        <option value="environment">Environmental data</option>
+        <option value="maintenance">Maintenance data</option>
+        <option value="product">Product status</option></select>
+      <div class="btns"><button class="sec" id="d-send">Send request</button></div>
+
+      <label>Power</label><span></span>
+      <div class="btns"><button class="sec" id="d-on">Switch on</button>
+        <button class="sec" id="d-off">Switch off</button></div>
+
+      <label for="d-mode">Mode</label>
+      <select id="d-mode">
+        <option value="off">Off</option>
+        <option value="reduced">Reduced light</option>
+        <option value="working" selected>Working light</option>
+        <option value="service">Service light</option></select>
+      <div class="btns"><button class="sec" id="set-mode">Set mode</button></div>
+
+      <label for="d-bri">Brightness (%)</label>
+      <input id="d-bri" type="number" min="0" max="100" placeholder="0 to 100">
+      <div class="btns"><button class="sec" id="set-bri">Set brightness</button></div>
+
+      <label for="d-k">Color temperature (K)</label>
+      <input id="d-k" type="number" min="1000" max="10000" placeholder="2700 to 6500">
+      <div class="btns"><button class="sec" id="set-k">Set color</button></div>
+
+      <label for="d-vtl">VTL</label>
+      <select id="d-vtl">
+        <option value="off">Off</option>
+        <option value="normal">Normal</option>
+        <option value="owl">Owl</option>
+        <option value="lark">Lark</option></select>
+      <div class="btns"><button class="sec" id="set-vtl">Set VTL</button></div>
+    </div>
+    <p class="hint" style="margin:.9rem 0 0">Each button changes only that
+      setting. Color temperature only sticks when VTL is off.</p>
+    <div class="cmd raw" style="margin-top:1rem">
+      <label for="d-raw">Raw D2 payload</label>
+      <input id="d-raw" class="mono" placeholder="18 21 0F 78 0D AC">
+      <div class="btns"><button class="sec" id="d-rawsend">Send raw</button></div>
+    </div>
+    <p class="hint" style="margin-bottom:0">Sent as-is after the D2 RORG byte.
+      The first byte holds the head index in the high nibble and the command id
+      in the low nibble.</p>
+    <p class="hint note" id="cmd-note" role="status"></p>
+  </div>
+  <div class="card"><h2>Telegram monitor</h2>
+    <label class="check"><input type="checkbox" id="t-filter">
+      Only show the target head</label>
+    <div class="scroll"><table><thead><tr><th>Time</th><th>Dir</th><th>Sender</th>
+      <th>dBm</th><th>Bytes</th><th>Decoded</th></tr></thead>
+      <tbody id="telegrams"></tbody></table></div>
+    <p class="hint" id="t-note" style="margin:.7rem 0 0" hidden></p>
+  </div>
+</section>
+
+<section id="tab-mqtt" role="tabpanel" hidden>
+  <div class="card"><h2>Broker</h2><div class="row" id="mqtt-status"></div></div>
+  <div class="card"><h2>Home Assistant discovery</h2>
+    <p class="hint" style="margin-top:0">The bridge publishes discovery config
+      for every luminaire, and Home Assistant creates the entities from it.
+      Republish if entities are missing.</p>
+    <button class="sec" id="d-rediscover">Republish discovery</button>
+    <span class="msg" id="disc-note" role="status"></span>
+  </div>
+  <div class="card"><h2>Topics</h2>
+    <div class="scroll" id="mqtt-topics"></div>
+  </div>
+</section>
+
+<section id="tab-settings" role="tabpanel" hidden>
+  <form id="cfg"></form>
+  <div class="savebar" id="savebar">
+    <span class="what" id="dirty">No unsaved changes.</span>
+    <button class="sec" id="discard" disabled>Discard</button>
+    <button class="act" id="save" disabled>Save</button>
+    <span class="msg" id="cfgnote" role="status"></span>
+  </div>
+</section>
+
+<p class="hint" style="margin:1.5rem 0 0;text-align:center">
+  <a href="https://github.com/petercv/waldmann-enocean"
+     style="color:inherit">waldmann-enocean</a> is an independent project and is
+  not affiliated with or endorsed by Waldmann GmbH&nbsp;&amp;&nbsp;Co.&nbsp;KG.
+</p>
+</div>
+
+<script>
+const FIELD_GROUPS = {
+  "Radio": ["port","baudrate","sender_offset"],
+  "MQTT broker": ["mqtt_host","mqtt_port","mqtt_username","mqtt_password","mqtt_client_id"],
+  "MQTT security": ["mqtt_tls","mqtt_tls_ca","mqtt_tls_insecure"],
+  "Topics": ["base_topic","discovery_prefix"],
+  "Timing": ["poll_interval","maintenance_interval","pair_window"],
+  "Web interface": ["web_host","web_port"],
+  "Sign-in": ["web_username","web_current","web_new"]
+};
+// Not config keys: these go to /api/password, which is a separate endpoint
+// because it has to check the current password before it changes anything.
+const CREDENTIAL_KEYS = ["web_username","web_current","web_new"];
+const GROUP_HINTS = {
+  "Radio": "The EnOcean USB stick. Changes to the port or baud rate apply after a restart.",
+  "MQTT broker": "The broker Home Assistant uses. Changes apply immediately.",
+  "Web interface": "Where this page is served. Changes apply after a restart.",
+  "Sign-in": "Saving a new username or password signs out every session, including this one."
+};
+const LABELS = {
+  port: "Serial port", baudrate: "Baud rate", sender_offset: "Sender address offset",
+  mqtt_host: "Host", mqtt_port: "Port", mqtt_username: "Username",
+  mqtt_password: "Password", mqtt_client_id: "Client ID",
+  mqtt_tls: "Use TLS", mqtt_tls_ca: "CA certificate file",
+  mqtt_tls_insecure: "Skip certificate verification",
+  base_topic: "Base topic", discovery_prefix: "Discovery prefix",
+  poll_interval: "Poll interval (seconds)",
+  maintenance_interval: "Maintenance interval (seconds)",
+  pair_window: "Pairing window (seconds)",
+  web_host: "Listen address", web_port: "Listen port",
+  web_username: "Username", web_current: "Current password",
+  web_new: "New password",
+};
+// fields offered as a fixed list rather than free text
+const CHOICES = {
+  baudrate: [9600, 19200, 38400, 57600, 115200],
+};
+const HINTS = {
+  port: "Leave empty to detect it automatically.",
+  baudrate: "EnOcean sticks use 57600.",
+  sender_offset: "Address for new pairings (Base ID + offset). Luminaires that " +
+    "are already paired keep the address they were paired from.",
+  mqtt_tls_ca: "Only needed for a self-signed certificate.",
+  mqtt_tls_insecure: "Accepts any certificate. For testing only.",
+  poll_interval: "The luminaire also reports by itself every 300 s.",
+  maintenance_interval: "Operating hours and energy use. The luminaire only sends these when asked.",
+  web_current: "Needed to change the username or password.",
+  web_new: "At least 8 characters. Leave empty to keep the current one.",
+};
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[<>&"']/g,
+  c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
+// Polling redraws every few seconds.  Skipping identical redraws keeps text
+// selectable and keeps focus on buttons instead of recreating them.
+const setHTML = (el, html) => { if (el._html !== html) el.innerHTML = el._html = html; };
+// A short status line that clears itself, for the result of a button press.
+function note(el, text) {
+  el.textContent = text;
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => { el.textContent = ''; }, 5000);
+}
+// A failed request must be visible: otherwise the panels just stay blank and
+// there is nothing to tell you the bridge is unreachable or the session expired.
+function banner(text) {
+  let el = document.getElementById('banner');
+  if (!text) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'banner';
+    el.setAttribute('role', 'alert');
+    el.style.cssText = 'background:var(--bad);color:#fff;padding:.6rem .9rem;' +
+      'border-radius:8px;margin-bottom:1rem;font-size:.85rem';
+    document.querySelector('.wrap').prepend(el);
+  }
+  el.textContent = text;
+}
+function showLogin(show = true) {
+  const overlay = document.getElementById('login');
+  // Gone from the DOM after a successful sign-in, so a session that expires
+  // later reloads to get the form back rather than un-hiding nothing.
+  if (!overlay) { if (show) location.reload(); return; }
+  // Every poll gets a 401 while signed out; only react to an actual change,
+  // or the focus keeps jumping away from whatever field you're typing in.
+  if (overlay.hidden === !show) return;
+  overlay.hidden = !show;
+  document.querySelector('.wrap').inert = show;
+  if (show) setTimeout(() => $('#l-user').value ? $('#l-pass').focus() : $('#l-user').focus(), 50);
+}
+
+// Chrome and Edge take the credential straight from the API; Safari and
+// Firefox have no equivalent and rely on the form heuristics above instead.
+function offerToSave(username, password) {
+  try {
+    if (window.PasswordCredential && navigator.credentials)
+      navigator.credentials.store(new PasswordCredential({
+        id: username, password, name: username,
+      }));
+  } catch (e) { /* not supported, or blocked on an insecure origin */ }
+}
+async function doLogin(e) {
+  if (e) e.preventDefault();
+  const button = $('#l-submit');
+  button.disabled = true;
+  $('#l-note').textContent = '';
+  let r, j = {};
+  try {
+    r = await fetch('/api/login', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username: $('#l-user').value, password: $('#l-pass').value})});
+    j = await r.json().catch(() => ({}));
+  } catch (err) {
+    $('#l-note').textContent = 'Cannot reach the bridge.';
+    button.disabled = false;
+    return false;
+  }
+  button.disabled = false;
+  if (j.ok && j.token) {
+    token = j.token;
+    store.set(token);
+    offerToSave($('#l-user').value, $('#l-pass').value);
+    // Removing the form rather than hiding it is what tells a browser the
+    // sign-in succeeded; a login form still sitting in the DOM reads as a
+    // failed attempt, and no save is offered.
+    document.getElementById('login').remove();
+    document.querySelector('.wrap').inert = false;
+    banner('');
+    loadConfig(); refresh(); refreshTelegrams();
+  } else {
+    $('#l-note').textContent = j.error || `Sign-in failed (HTTP ${r.status}).`;
+  }
+  return false;
+}
+const store = {
+  get() { try { return localStorage.getItem('waldmann-enocean.token') || ''; } catch (e) { return ''; } },
+  set(v) { try { localStorage.setItem('waldmann-enocean.token', v); } catch (e) {} },
+  clear() { try { localStorage.removeItem('waldmann-enocean.token'); } catch (e) {} },
+};
+let token = store.get();
+const authHeaders = () => token ? {'Authorization': 'Bearer ' + token} : {};
+const api = async (p, body) => {
+  try {
+    const r = await fetch(p, body
+      ? {method:'POST', headers:{'Content-Type':'application/json', ...authHeaders()},
+         body:JSON.stringify(body)}
+      : {headers: authHeaders()});
+    if (r.status === 401) { token = ''; store.clear(); showLogin(); return {}; }
+    if (!r.ok) { banner('Request failed: ' + p + ' returned ' + r.status); return {}; }
+    banner('');
+    return await r.json();
+  } catch (e) {
+    banner('Cannot reach the bridge: ' + e.message);
+    return {};
+  }
+};
+
+// The open tab is kept in the address, so a reload stays where you were.
+const TABS = ['status', 'enocean', 'mqtt', 'settings'];
+function showTab(name) {
+  if (!TABS.includes(name)) name = 'status';
+  document.querySelectorAll('.tabs button').forEach(b => {
+    const on = b.dataset.tab === name;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-selected', on);
+  });
+  TABS.forEach(t => $('#tab-' + t).hidden = (t !== name));
+  if (name === 'enocean') refreshTelegrams();
+}
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  history.replaceState(null, '', '#' + b.dataset.tab);
+  showTab(b.dataset.tab);
+});
+
+const mqttCell = s => `<span class="dot ${s.mqtt_connected ? 'ok' : 'bad'}"></span>` +
+  esc(s.mqtt_host) + ' <span class="hint">' +
+  (s.mqtt_connected ? 'connected' : esc(s.mqtt_error || 'not connected')) + '</span>';
+const withUnit = (v, unit) => v == null ? '-' : esc(v) + unit;
+// the decoder's words ("working light"), capitalised to match the drop-downs
+const word = v => v == null ? '-' : esc(String(v).charAt(0).toUpperCase() + String(v).slice(1));
+// Coarse on purpose: a value that changes every second would redraw the
+// device cards on every poll.
+const ago = s => s == null ? '-'
+  : s < 60 ? 'just now' : s < 3600 ? Math.floor(s / 60) + ' min ago'
+  : Math.floor(s / 3600) + ' h ago';
+
+let devicesCache = [];
+// Pairing: remember which luminaires existed when it started, so we can say
+// afterwards whether a new one was added.
+let pairKnown = null, pairSeen = false, pairResult = '';
+
+async function refresh() {
+  const s = await api('/api/state');
+  if (!s.devices) return;
+  setHTML($('#status'), [
+    ['Stick', esc(s.port || '-')], ['Base ID', esc(s.base_id || '-')],
+    ['Sender address', esc(s.sender || '-')], ['MQTT', mqttCell(s)],
+    ['Base topic', esc(s.base_topic)],
+    ['Uptime', Math.floor(s.uptime / 3600) + 'h ' + Math.floor(s.uptime % 3600 / 60) + 'm']
+  ].map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join(''));
+
+  if (pairKnown) {
+    if (s.pairing) pairSeen = true;
+    else if (pairSeen) {
+      const added = s.devices.filter(d => !pairKnown.has(d.id)).map(d => d.id);
+      pairResult = added.length ? 'Paired ' + added.join(', ') + '.' : 'Pairing closed, nothing new was paired.';
+      pairKnown = null; pairSeen = false;
+    }
+  }
+  $('#pairnote').textContent = s.pairing ? `Press key C now (${s.pairing_left} s left).` : pairResult;
+  $('#pair').disabled = s.pairing;
+  $('#pairstop').hidden = !s.pairing;
+
+  // Follow new lines only if you're already at the bottom, so scrolling back
+  // to read something isn't undone by the next poll.
+  const log = $('#log'), text = s.log.join('\n');
+  if (log.textContent !== text) {
+    const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+    log.textContent = text;
+    if (atEnd) log.scrollTop = log.scrollHeight;
+  }
+
+  devicesCache = s.devices;
+  setHTML($('#devices'), s.devices.length ? s.devices.map(d => `
+    <div class="card"><h2>${esc(d.id)} <span class="hint">${esc(d.eep)}</span></h2>
+    ${d.units.length ? `<div class="scroll"><table><thead><tr><th>Head</th><th>Mode</th>
+      <th>Brightness</th><th>Color temp</th><th>VTL</th><th>Presence</th><th>Lux</th>
+      <th>Temperature</th><th>Humidity</th><th>Last seen</th></tr></thead><tbody>` +
+      d.units.map(u => {
+        const f = u.fields || {};
+        return `<tr><td>${esc(u.unit)}</td><td>${word(f.illumination_mode)}</td>
+          <td>${withUnit(f.dim_percent, ' %')}</td><td>${withUnit(f.color_temp_k, ' K')}</td>
+          <td>${word(f.vtl)}</td><td>${word(f.presence)}</td>
+          <td>${withUnit(f.illumination_lx, '')}</td><td>${withUnit(f.temperature_c, ' °C')}</td>
+          <td>${withUnit(f.humidity_pct, ' %')}</td><td>${ago(u.last_seen)}</td></tr>`;
+      }).join('') + '</tbody></table></div>' : '<p class="hint">Nothing received yet.</p>'}
+    <p style="margin:.8rem 0 0">
+      <button class="sec" data-refresh="${esc(d.id)}">Refresh now</button>
+      <button class="sec" data-forget="${esc(d.id)}">Forget</button></p></div>`).join('')
+    : '<div class="card"><p class="hint" style="margin:0">Nothing paired yet. ' +
+      'Use <b>Start pairing</b> on the Status tab.</p></div>');
+
+  const sel = $('#d-dev'), keep = sel.value;
+  setHTML(sel, s.devices.map(d => `<option>${esc(d.id)}</option>`).join(''));
+  if (keep) sel.value = keep;
+  syncHeads();
+  // with nothing paired every command would only come back with an error
+  document.querySelectorAll('#tab-enocean .cmd button').forEach(b => b.disabled = !s.devices.length);
+  renderMqtt(s);
+}
+
+// The heads are only known once the luminaire has answered a Product Status,
+// so offer head 0 until then rather than an empty drop-down.
+function syncHeads() {
+  const sel = $('#d-unit'), keep = sel.value;
+  const device = devicesCache.find(d => d.id === $('#d-dev').value);
+  const units = device && device.units.length ? device.units.map(u => u.unit) : [0];
+  setHTML(sel, units.map(u => `<option>${esc(u)}</option>`).join(''));
+  if (units.map(String).includes(keep)) sel.value = keep;
+}
+
+function renderMqtt(s) {
+  setHTML($('#mqtt-status'), [
+    ['Broker', mqttCell(s)],
+    ['Base topic', esc(s.base_topic)],
+    ['Discovery prefix', esc(s.discovery_prefix || '-')]
+  ].map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join(''));
+
+  const bridge = s.bridge_topics || {};
+  const rows = [
+    ['Bridge availability', bridge.availability, 'published'],
+    ['Start pairing', bridge.pair, 'subscribed'],
+  ];
+  for (const d of s.devices) {
+    rows.push([`${d.id} refresh`, d.refresh_topic, 'subscribed']);
+    for (const u of d.units) {
+      rows.push([`${d.id} head ${u.unit} state`, u.topics.state, 'published']);
+      rows.push([`${d.id} head ${u.unit} command`, u.topics.set, 'subscribed']);
+      rows.push([`${d.id} head ${u.unit} VTL`, u.topics.vtl, 'subscribed']);
+    }
+  }
+  setHTML($('#mqtt-topics'), `<table><thead><tr><th>What</th><th>Topic</th>
+    <th>Direction</th></tr></thead><tbody>` + rows.filter(r => r[1]).map(
+    ([what, topic, dir]) => `<tr><td>${esc(what)}</td><td class="mono">${esc(topic)}</td>
+      <td class="hint">${dir}</td></tr>`).join('') + '</tbody></table>');
+}
+
+// A telegram without a head of its own (a teach-in, a signal telegram) still
+// belongs to the luminaire, so the head filter must not hide it.
+function selected(t) {
+  if (t.device !== $('#d-dev').value) return false;
+  return t.unit == null || t.unit === +$('#d-unit').value;
+}
+
+async function refreshTelegrams() {
+  if ($('#tab-enocean').hidden) return;
+  const all = await api('/api/telegrams');
+  if (!Array.isArray(all)) return;
+  const on = $('#t-filter').checked;
+  const rows = on ? all.filter(selected) : all;
+  setHTML($('#telegrams'), rows.length ? rows.slice().reverse().map(t =>
+    `<tr><td>${esc(t.t)}</td><td class="${t.dir === 'TX' ? 'tx' : 'rx'}">${esc(t.dir)}</td>
+     <td class="mono">${esc(t.sender || '-')}</td><td>${esc(t.dbm ?? '-')}</td>
+     <td class="mono">${esc(t.hex)}</td><td>${esc(t.summary)}</td></tr>`).join('')
+    : `<tr><td colspan="6" class="hint">${all.length ? 'Nothing for this head yet.' : 'No telegrams yet.'}</td></tr>`);
+  const hint = $('#t-note'), hidden = all.length - rows.length;
+  hint.hidden = !on;
+  hint.textContent = `${hidden} telegram${hidden === 1 ? '' : 's'} hidden by the filter.`;
+}
+
+async function cmd(device, action, extra, where = '#cmd-note') {
+  const r = await api('/api/command', Object.assign({device, action}, extra || {}));
+  note($(where), r.ok ? 'Sent.' : (r.error || 'Not sent.'));
+  setTimeout(refresh, 600);
+}
+async function forget(id) {
+  if (!confirm('Forget ' + id + '? It will disappear from Home Assistant.')) return;
+  const r = await api('/api/forget', {id});
+  note($('#dev-note'), r.ok ? 'Forgot ' + id + '.' : 'Not forgotten.');
+  setTimeout(refresh, 500);
+}
+$('#devices').addEventListener('click', e => {
+  const refreshButton = e.target.closest('[data-refresh]');
+  if (refreshButton) return cmd(refreshButton.dataset.refresh, 'refresh', {}, '#dev-note');
+  const forgetButton = e.target.closest('[data-forget]');
+  if (forgetButton) forget(forgetButton.dataset.forget);
+});
+
+// Theme: "auto" leaves it to prefers-color-scheme, the other two override it.
+// applyTheme also runs from the inline script in <head>, before first paint.
+$('#theme').value = savedTheme();
+$('#theme').onchange = () => {
+  applyTheme($('#theme').value);
+  try { localStorage.setItem('waldmann-enocean.theme', $('#theme').value); } catch (e) { /* private mode */ }
+};
+
+$('#t-filter').onchange = refreshTelegrams;
+$('#d-dev').addEventListener('change', () => { syncHeads(); refreshTelegrams(); });
+$('#d-unit').addEventListener('change', refreshTelegrams);
+
+$('#pair').onclick = async () => {
+  $('#pair').disabled = true;
+  pairKnown = new Set(devicesCache.map(d => d.id));
+  pairSeen = false;
+  pairResult = '';
+  const r = await api('/api/pair', {});
+  if (!r.ok) { pairKnown = null; $('#pair').disabled = false; return; }
+  setTimeout(refresh, 400);
+};
+$('#pairstop').onclick = async () => { await api('/api/pair/stop', {}); setTimeout(refresh, 400); };
+$('#d-send').onclick = () => cmd($('#d-dev').value, 'get',
+  {unit: +$('#d-unit').value, value: $('#d-get').value});
+// one field per request; the bridge sends "no change" for everything else
+const setOne = (field, value) => {
+  if (value === '' || value == null) { note($('#cmd-note'), 'Enter a value first.'); return; }
+  cmd($('#d-dev').value, 'set', {unit: +$('#d-unit').value, [field]: value});
+};
+// on/off goes through the same path Home Assistant uses, so switching on
+// restores whatever mode the head was in rather than forcing working light
+const power = state => cmd($('#d-dev').value, 'light', {unit: +$('#d-unit').value, state});
+$('#d-on').onclick = () => power('ON');
+$('#d-off').onclick = () => power('OFF');
+$('#set-mode').onclick = () => setOne('mode', $('#d-mode').value);
+$('#set-bri').onclick = () => setOne('brightness', $('#d-bri').value);
+$('#set-k').onclick = () => setOne('kelvin', $('#d-k').value);
+$('#set-vtl').onclick = () => setOne('vtl', $('#d-vtl').value);
+$('#d-bri').addEventListener('keydown', e => { if (e.key === 'Enter') $('#set-bri').click(); });
+$('#d-k').addEventListener('keydown', e => { if (e.key === 'Enter') $('#set-k').click(); });
+$('#d-rawsend').onclick = async () => {
+  const r = await api('/api/raw', {device: $('#d-dev').value, hex: $('#d-raw').value});
+  note($('#cmd-note'), r.ok ? 'Sent ' + r.sent + '.' : (r.error || 'Not sent.'));
+};
+$('#d-rediscover').onclick = async () => {
+  const r = await api('/api/rediscover', {});
+  note($('#disc-note'), r.ok ? 'Republished.' : 'Not republished.');
+};
+
+// One card per group, so Settings reads like the other tabs.
+function configCard(group, c, ports) {
+  // Hints live inside the label so they sit under their own field; as
+  // siblings they would take grid cells of their own and break the columns.
+  const hint = (k, extra) => (HINTS[k] || extra)
+    ? `<div class="hint" style="margin-top:.25rem">${HINTS[k] || ''}${extra || ''}</div>` : '';
+  const name = k => LABELS[k] || k;
+  const field = (k, control, extra) =>
+    `<label><span>${name(k)}</span>${control}${hint(k, extra)}</label>`;
+
+  return `<div class="card"><h2>${group}</h2>` +
+    (GROUP_HINTS[group] ? `<p class="hint" style="margin:-.3rem 0 .9rem">${GROUP_HINTS[group]}</p>` : '') +
+    '<div class="grid">' +
+    FIELD_GROUPS[group].map(k => {
+      if (k === 'port') {
+        // Autodetected when empty: show what it actually resolved to, and
+        // offer the ports we can see so it can be pinned down.
+        const active = (ports && ports.active) || '';
+        const list = ((ports && ports.ports) || [])
+          .map(p => `<option value="${esc(p)}">`).join('');
+        return field(k,
+          `<input name="${k}" list="portlist" value="${esc(c[k] ?? '')}" placeholder="auto">
+           <datalist id="portlist">${list}</datalist>`,
+          active ? ` Currently <b>${esc(active)}</b>.` : '');
+      }
+      if (k === 'mqtt_password')
+        return field(k, `<input name="${k}" type="password" autocomplete="new-password"
+          placeholder="${c.mqtt_password_set ? 'leave empty to keep' : ''}">`,
+          c.mqtt_password_set ? ' A password is stored.' : '');
+      if (k === 'web_current' || k === 'web_new')
+        return field(k, `<input name="${k}" type="password" autocomplete="${
+          k === 'web_current' ? 'current-password' : 'new-password'}">`);
+      if (typeof c[k] === 'boolean')
+        return field(k, `<select name="${k}">
+          <option value="true"${c[k] ? ' selected' : ''}>Yes</option>
+          <option value="false"${c[k] ? '' : ' selected'}>No</option></select>`);
+      if (CHOICES[k])
+        return field(k, `<select name="${k}">` + CHOICES[k].map(v =>
+          `<option value="${v}"${String(c[k]) === String(v) ? ' selected' : ''}>${v}</option>`
+        ).join('') + `</select>`);
+      const type = typeof c[k] === 'number' ? ' type="number"' : '';
+      return field(k, `<input name="${k}"${type} value="${esc(c[k] ?? '')}">`);
+    }).join('') + '</div></div>';
+}
+
+// What the fields held when the form was drawn, to tell a real edit from a
+// field that merely exists.  Cards are a layout choice, not units of change:
+// moving to a TLS broker touches two of them and still has to save as one.
+let savedValues = {};
+const GROUP_OF = Object.fromEntries(
+  Object.entries(FIELD_GROUPS).flatMap(([g, keys]) => keys.map(k => [k, g])));
+
+const configFields = () => [...document.querySelectorAll('#cfg [name]')];
+const fieldNamed = name => configFields().find(el => el.name === name);
+// The current password only confirms a change, it isn't one; a password
+// manager filling it in shouldn't make the page look edited.
+const dirtyFields = () => configFields().filter(el =>
+  el.name !== 'web_current' && el.value !== (savedValues[el.name] ?? ''));
+
+function updateSaveBar() {
+  const dirty = dirtyFields();
+  const sections = [...new Set(dirty.map(el => GROUP_OF[el.name]))];
+  $('#dirty').textContent = dirty.length
+    ? `${dirty.length} unsaved change${dirty.length === 1 ? '' : 's'} in ${sections.join(', ')}.`
+    : 'No unsaved changes.';
+  $('#save').disabled = $('#discard').disabled = dirty.length === 0;
+}
+
+async function loadConfig() {
+  const c = await api('/api/config');
+  if (!c.base_topic) return;
+  const ports = await api('/api/ports');
+  $('#cfg').innerHTML = Object.keys(FIELD_GROUPS)
+    .map(group => configCard(group, c, ports)).join('');
+  savedValues = Object.fromEntries(configFields().map(el => [el.name, el.value]));
+  updateSaveBar();
+}
+
+$('#cfg').addEventListener('input', () => { $('#cfgnote').textContent = ''; updateSaveBar(); });
+$('#cfg').addEventListener('change', updateSaveBar);
+
+// Only the edited fields are posted, so one save covers every section that was
+// touched: the endpoint merges what it is given, and a change spanning two
+// cards still reaches the bridge as a single write and a single reconnect.
+$('#save').onclick = async e => {
+  e.preventDefault();
+  const say = text => { $('#cfgnote').textContent = text; };
+  const value = name => (fieldNamed(name) || {}).value || '';
+  const dirty = dirtyFields();
+  const settings = dirty.filter(el => !CREDENTIAL_KEYS.includes(el.name));
+  const credentials = dirty.filter(el => CREDENTIAL_KEYS.includes(el.name));
+  const notes = [];
+
+  if (credentials.length && !value('web_current')) {
+    say('Enter your current password to change the username or password.');
+    fieldNamed('web_current').focus();
+    return;  // nothing is saved, so the settings are not half-applied either
+  }
+  if (settings.length) {
+    const r = await api('/api/config', Object.fromEntries(settings.map(el => [el.name, el.value])));
+    if (r.error) {
+      say((r.field ? (LABELS[r.field] || r.field) + ' ' : '') + r.error);
+      if (r.field && fieldNamed(r.field)) fieldNamed(r.field).focus();
+      return;
+    }
+    if (!r.ok) { say('Not saved.'); return; }
+    if (r.changed.length)
+      notes.push('Saved ' + r.changed.map(k => LABELS[k] || k).join(', ') + '.' +
+                 (r.restart_required ? ' Restart the service to apply.' : ''));
+  }
+  if (credentials.length) {
+    const r = await api('/api/password', {username: value('web_username'),
+      current: value('web_current'), new: value('web_new')});
+    if (!r.ok) {
+      say(notes.concat(r.error || 'Username and password not saved.').join(' '));
+      await loadConfig();
+      return;
+    }
+    if (r.changed.length) {
+      // The bridge has just dropped every session, this one included.
+      say(notes.concat('Username or password changed. Sign in again.').join(' '));
+      token = ''; store.clear();
+      setTimeout(() => location.reload(), 1500);
+      return;
+    }
+    notes.push('Username and password unchanged.');
+  }
+  say(notes.join(' ') || 'No changes.');
+  await loadConfig();
+};
+$('#discard').onclick = async e => {
+  e.preventDefault();
+  $('#cfgnote').textContent = '';
+  await loadConfig();
+};
+
+$('#loginform').addEventListener('submit', doLogin);
+$('#logout').onclick = async () => {
+  await api('/api/logout', {});
+  token = ''; store.clear(); showLogin();
+};
+showTab(location.hash.slice(1));
+loadConfig(); refresh(); refreshTelegrams();
+setInterval(refresh, 3000); setInterval(refreshTelegrams, 2000);
+</script>
+</body></html>

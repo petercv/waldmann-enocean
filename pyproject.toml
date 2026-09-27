@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "waldmann-enocean"
+dynamic = ["version"]
+description = "Control Waldmann TALK MODUL EnOcean luminaires over EEP D2-41-00, with an MQTT bridge for Home Assistant"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Peter Verhage" }]
+keywords = ["enocean", "waldmann", "d2-41-00", "mqtt", "home-assistant", "esp3"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: No Input/Output (Daemon)",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Home Automation",
+]
+dependencies = ["pyserial>=3.5"]
+
+[project.optional-dependencies]
+# The CLI needs nothing but pyserial; the bridge adds MQTT.
+bridge = ["paho-mqtt>=1.6"]
+
+[project.urls]
+Homepage = "https://github.com/petercv/waldmann-enocean"
+Issues = "https://github.com/petercv/waldmann-enocean/issues"
+
+[project.scripts]
+waldmann = "waldmann_enocean.cli:main"
+waldmann-bridge = "waldmann_enocean.bridge.main:main"
+
+[tool.hatch.version]
+path = "src/waldmann_enocean/__init__.py"
+
+# Metadata 2.5 (hatchling 1.32 and later) is still rejected by older upload
+# tools, and nothing here needs it.
+[tool.hatch.build.targets.wheel]
+# everything in the package directory is included, index.html as well
+packages = ["src/waldmann_enocean"]
+core-metadata-version = "2.4"
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "docs", "README.md", "LICENSE"]
+core-metadata-version = "2.4"

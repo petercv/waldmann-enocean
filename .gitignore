@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+*.egg-info/
+.DS_Store
+.idea/
+
+# superseded scripts, vendor documents, and other pre-package leftovers
+old/
