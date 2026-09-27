@@ -29,6 +29,8 @@ BASE = "waldmann-enocean"
 STATE = {
     "uptime": 96_420,
     "port": "/dev/ttyUSB0",
+    "stick_connected": True,
+    "stick_error": "",
     "base_id": "FFD4A100",
     "sender": "FFD4A100",
     "mqtt_connected": True,

@@ -8,6 +8,7 @@ loop drains.  Other threads may only read, and then through copies (see
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import queue
@@ -18,6 +19,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+import serial
 
 from ..protocol import (
     ENVIRONMENTAL_DATA,
@@ -43,8 +46,8 @@ from ..protocol import (
     Device,
     Dongle,
     Radio,
-    autodetect_port,
     build_ute_response,
+    candidate_ports,
     decode_d2_41_00,
     encode_get,
     encode_set_unit_data,
@@ -62,6 +65,8 @@ except ImportError as exc:  # pragma: no cover
     raise SystemExit("paho-mqtt is missing.  Install it with: pip install paho-mqtt") from exc
 
 LOG = logging.getLogger("waldmann_enocean.bridge")
+
+STICK_RETRY = 5.0
 
 GET_NAMES = {
     "status": GET_UNIT_STATUS,
@@ -82,6 +87,10 @@ class UnitState:
     announced_sensors: set[str] = field(default_factory=set)
 
 
+class NoStick(Exception):
+    pass
+
+
 class Bridge:
     def __init__(self, config: Config, store_path: Path) -> None:
         self.config = config
@@ -98,6 +107,8 @@ class Bridge:
         self.mqtt_error = ""
         self.base_id = b""
         self.dongle: Dongle | None = None
+        self.stick_error = ""
+        self._next_stick_try = 0.0
         self.client: Any = None
         self._next_poll = 0.0
         self._next_maintenance = 0.0
@@ -221,7 +232,8 @@ class Bridge:
             self.mqtt_connected = True
             self.mqtt_error = ""
             self.note(f"MQTT connected to {self.config.mqtt_host}:{self.config.mqtt_port}")
-            client.publish(self.topics.availability(), "online", retain=True)
+            client.publish(self.topics.availability(),
+                           "online" if self.dongle else "offline", retain=True)
             base = self.config.base_topic
             # "+" must be a whole topic level - "unit+" is not a legal filter.
             # base/+/+/set covers both unitN/set and refresh/set, and
@@ -310,6 +322,8 @@ class Bridge:
                     if entry.fields:
                         self.publish(self.topics.state(device_id, unit),
                                      self.state_payload(entry))
+        # _on_connect runs on paho's thread and can race the stick opening
+        self.publish(self.topics.availability(), "online" if self.dongle else "offline")
         self.note("published Home Assistant discovery")
 
     def announce_unit(self, device_id: str, unit: int) -> None:
@@ -367,7 +381,8 @@ class Bridge:
     # -- radio --------------------------------------------------------------
 
     def send_vld(self, device_id: str, payload: bytes, summary: str = "") -> None:
-        assert self.dongle is not None
+        if self.dongle is None:
+            raise NoStick
         self.dongle.send_radio(
             RORG_VLD, payload, sender=self.sender_for(device_id),
             destination=bytes.fromhex(device_id),
@@ -467,6 +482,8 @@ class Bridge:
 
     def run_command(self, name: str, args: tuple[Any, ...]) -> None:
         if name == "pair":
+            if self.dongle is None:
+                raise NoStick
             window = args[0] if args else self.config.pair_window
             self.pair_until = time.monotonic() + window
             self.note(f"pairing open for {int(window)}s - briefly press key C on the module")
@@ -503,6 +520,10 @@ class Bridge:
             self.republish_discovery()
         elif name == "reconnect_mqtt":
             self.reconnect_mqtt()
+        elif name == "reopen_stick":
+            if self.dongle is not None:
+                self.close_stick("reopening the USB stick with the new settings")
+            self._next_stick_try = 0.0
 
     def lit_mode(self, device_id: str, unit: int) -> int:
         """A mode that produces light: the head's own, or working light.
@@ -617,33 +638,99 @@ class Bridge:
     # -- main loop ----------------------------------------------------------
 
     def run(self) -> None:
-        port = self.config.port or autodetect_port()
-        self.dongle = Dongle(port, self.config.baudrate)
-        self.base_id = self.dongle.base_id()
-        self.note(f"stick on {port}, Base ID {self.base_id.hex().upper()}, "
-                  f"transmitting as {self.sender().hex().upper()}")
         self.connect_mqtt()
         try:
             while True:
-                while True:
-                    try:
-                        name, args = self.commands.get_nowait()
-                    except queue.Empty:
-                        break
-                    try:
-                        self.run_command(name, args)
-                    except Exception:
-                        LOG.exception("command %s failed", name)
-                radio = self.dongle.read_radio(0.2)
-                if radio is not None:
-                    try:
-                        self.handle_radio(radio)
-                    except Exception:
-                        LOG.exception("failed handling telegram")
-                self.periodic()
+                if self.dongle is None and not self.open_stick():
+                    self.run_commands()
+                    time.sleep(0.2)
+                    continue
+                try:
+                    self.run_commands()
+                    if self.dongle is None:  # closed by reopen_stick
+                        continue
+                    radio = self.dongle.read_radio(0.2)
+                    if radio is not None:
+                        try:
+                            self.handle_radio(radio)
+                        except serial.SerialException:
+                            raise
+                        except Exception:
+                            LOG.exception("failed handling telegram")
+                    self.periodic()
+                except serial.SerialException as exc:
+                    self.close_stick(f"lost the USB stick: {exc}")
         finally:
             self.publish(self.topics.availability(), "offline")
-            self.dongle.close()
+            if self.dongle is not None:
+                self.dongle.close()
+
+    def run_commands(self) -> None:
+        while True:
+            try:
+                name, args = self.commands.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                self.run_command(name, args)
+            except NoStick:
+                self.note(f"{name} not sent: the USB stick isn't connected")
+            except serial.SerialException:
+                raise
+            except Exception:
+                LOG.exception("command %s failed", name)
+
+    def open_stick(self) -> bool:
+        now = time.monotonic()
+        if now < self._next_stick_try:
+            return False
+        self._next_stick_try = now + STICK_RETRY
+        found = candidate_ports()
+        port = self.config.port or (found[0] if found else "")
+        if not port:
+            return self.stick_missing("no EnOcean USB stick found")
+        try:
+            dongle = Dongle(port, self.config.baudrate)
+        except (serial.SerialException, OSError) as exc:
+            reason = {
+                errno.ENOENT: "it doesn't exist",
+                errno.EACCES: "permission denied, is the user in group dialout?",
+                errno.EBUSY: "it's in use by another program",
+            }.get(getattr(exc, "errno", None), str(exc))
+            return self.stick_missing(f"can't open {port}: {reason}")
+        try:
+            base_id = dongle.base_id()
+        except (serial.SerialException, OSError, RuntimeError) as exc:
+            dongle.close()
+            return self.stick_missing(f"no EnOcean stick answering on {port}: {exc}")
+        self.dongle, self.base_id, self.stick_error = dongle, base_id, ""
+        others = [p for p in found if p != port]
+        self.note(f"stick on {port}, Base ID {base_id.hex().upper()}, "
+                  f"transmitting as {self.sender().hex().upper()}"
+                  + (f" (also found {', '.join(others)})" if others and not self.config.port else ""))
+        self.publish(self.topics.availability(), "online")
+        self._next_poll = 0.0
+        return True
+
+    def stick_missing(self, problem: str) -> bool:
+        if problem != self.stick_error:
+            self.note(f"{problem}, retrying every {STICK_RETRY:g} s")
+        self.stick_error = problem
+        return False
+
+    def close_stick(self, reason: str) -> None:
+        self.note(reason)
+        if self.dongle is not None:
+            try:
+                self.dongle.close()
+            except Exception:
+                LOG.debug("error closing the USB stick", exc_info=True)
+        self.dongle, self.base_id = None, b""
+        self.stick_error = reason
+        self.pair_until = 0.0
+        self._followups = []
+        self.publish(self.topics.availability(), "offline")
+        self._next_stick_try = time.monotonic() + STICK_RETRY
 
     def periodic(self) -> None:
         now = time.monotonic()
@@ -682,6 +769,8 @@ class Bridge:
         return {
             "uptime": int(time.time() - self.started),
             "port": self.dongle.port if self.dongle else "",
+            "stick_connected": self.dongle is not None,
+            "stick_error": self.stick_error,
             "base_id": self.base_id.hex().upper(),
             "sender": self.sender().hex().upper(),
             "mqtt_connected": self.mqtt_connected,

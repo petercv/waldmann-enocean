@@ -278,7 +278,7 @@ const FIELD_GROUPS = {
 // because it has to check the current password before it changes anything.
 const CREDENTIAL_KEYS = ["web_username","web_current","web_new"];
 const GROUP_HINTS = {
-  "Radio": "The EnOcean USB stick. Changes to the port or baud rate apply after a restart.",
+  "Radio": "The EnOcean USB stick. Changes apply immediately.",
   "MQTT broker": "The broker Home Assistant uses. Changes apply immediately.",
   "Web interface": "Where this page is served. Changes apply after a restart.",
   "Sign-in": "Saving a new username or password signs out every session, including this one."
@@ -439,6 +439,10 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
 const mqttCell = s => `<span class="dot ${s.mqtt_connected ? 'ok' : 'bad'}"></span>` +
   esc(s.mqtt_host) + ' <span class="hint">' +
   (s.mqtt_connected ? 'connected' : esc(s.mqtt_error || 'not connected')) + '</span>';
+const stickCell = s => `<span class="dot ${s.stick_connected ? 'ok' : 'bad'}"></span>` +
+  (s.stick_connected ? esc(s.port) + ' <span class="hint">connected</span>'
+    : 'Not connected <span class="hint">' + esc(s.stick_error || 'looking for it') +
+      ', retrying</span>');
 const withUnit = (v, unit) => v == null ? '-' : esc(v) + unit;
 // the decoder's words ("working light"), capitalised to match the drop-downs
 const word = v => v == null ? '-' : esc(String(v).charAt(0).toUpperCase() + String(v).slice(1));
@@ -457,7 +461,7 @@ async function refresh() {
   const s = await api('/api/state');
   if (!s.devices) return;
   setHTML($('#status'), [
-    ['Stick', esc(s.port || '-')], ['Base ID', esc(s.base_id || '-')],
+    ['USB stick', stickCell(s)], ['Base ID', esc(s.base_id || '-')],
     ['Sender address', esc(s.sender || '-')], ['MQTT', mqttCell(s)],
     ['Base topic', esc(s.base_topic)],
     ['Uptime', Math.floor(s.uptime / 3600) + 'h ' + Math.floor(s.uptime % 3600 / 60) + 'm']
@@ -471,8 +475,9 @@ async function refresh() {
       pairKnown = null; pairSeen = false;
     }
   }
-  $('#pairnote').textContent = s.pairing ? `Press key C now (${s.pairing_left} s left).` : pairResult;
-  $('#pair').disabled = s.pairing;
+  $('#pairnote').textContent = s.pairing ? `Press key C now (${s.pairing_left} s left).`
+    : s.stick_connected ? pairResult : 'Pairing needs the USB stick.';
+  $('#pair').disabled = s.pairing || !s.stick_connected;
   $('#pairstop').hidden = !s.pairing;
 
   // Follow new lines only if you're already at the bottom, so scrolling back
@@ -508,8 +513,8 @@ async function refresh() {
   setHTML(sel, s.devices.map(d => `<option>${esc(d.id)}</option>`).join(''));
   if (keep) sel.value = keep;
   syncHeads();
-  // with nothing paired every command would only come back with an error
-  document.querySelectorAll('#tab-enocean .cmd button').forEach(b => b.disabled = !s.devices.length);
+  document.querySelectorAll('#tab-enocean .cmd button')
+    .forEach(b => b.disabled = !s.devices.length || !s.stick_connected);
   renderMqtt(s);
 }
 
@@ -608,7 +613,10 @@ $('#pair').onclick = async () => {
   pairSeen = false;
   pairResult = '';
   const r = await api('/api/pair', {});
-  if (!r.ok) { pairKnown = null; $('#pair').disabled = false; return; }
+  if (!r.ok) {
+    pairKnown = null; pairResult = r.error || 'Pairing didn\'t start.';
+    $('#pair').disabled = false; refresh(); return;
+  }
   setTimeout(refresh, 400);
 };
 $('#pairstop').onclick = async () => { await api('/api/pair/stop', {}); setTimeout(refresh, 400); };

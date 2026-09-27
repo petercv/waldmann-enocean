@@ -179,6 +179,8 @@ def make_handler(bridge: Bridge, config_path: Path):
                 return self._deny()
 
             if path == "/api/pair":
+                if bridge.dongle is None:
+                    return self._json({"error": "The USB stick isn't connected."})
                 seconds = int(data.get("seconds") or bridge.config.pair_window)
                 bridge.commands.put(("pair", (seconds,)))
                 return self._json({"ok": True})
@@ -209,6 +211,8 @@ def make_handler(bridge: Bridge, config_path: Path):
             action = str(data.get("action", ""))
             if device not in bridge.devices:
                 return {"error": "Unknown luminaire."}
+            if bridge.dongle is None:
+                return {"error": "The USB stick isn't connected."}
             if action == "get":
                 which = str(data.get("value", "status"))
                 if which not in GET_NAMES:
@@ -239,6 +243,8 @@ def make_handler(bridge: Bridge, config_path: Path):
             device = str(data.get("device", "")).upper()
             if device not in bridge.devices:
                 return {"error": "Unknown luminaire."}
+            if bridge.dongle is None:
+                return {"error": "The USB stick isn't connected."}
             try:
                 payload = bytes.fromhex(str(data.get("hex", "")).replace(" ", ""))
             except ValueError:
@@ -301,12 +307,14 @@ def make_handler(bridge: Bridge, config_path: Path):
             changed = list(updates)
             config.save(config_path)
             bridge.note(f"configuration updated: {', '.join(changed) or 'no changes'}")
-            # MQTT settings are applied live; only the serial port and the web
-            # listener itself need the service restarted.
+            # MQTT and stick settings are applied live; only the web listener
+            # itself needs the service restarted.
             if any(k.startswith("mqtt_") or k in ("base_topic", "discovery_prefix")
                    for k in changed):
                 bridge.commands.put(("reconnect_mqtt", ()))
-            restart = any(k in ("port", "baudrate") or k.startswith("web_") for k in changed)
+            if any(k in ("port", "baudrate") for k in changed):
+                bridge.commands.put(("reopen_stick", ()))
+            restart = any(k.startswith("web_") for k in changed)
             return {"ok": True, "changed": changed, "restart_required": restart}
 
     return Handler

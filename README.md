@@ -33,8 +33,10 @@ D2-41-00 and the UTE teach-in directly from the EEP tables. (No dependencies on
 | Profile | [D2-41-00](https://www.enocean-alliance.org/wp-content/uploads/2022/10/D2-41-00.pdf) |
 
 The serial port is detected automatically (`/dev/cu.usbserial-*`,
-`/dev/ttyUSB*`, `/dev/serial/by-id/*EnOcean*`). Use `--port` to set it
-yourself.
+`/dev/ttyUSB*`, `/dev/serial/by-id/*EnOcean*`). You can also set it under
+**Settings** or with `--port`. If the bridge can't find or open the stick, the
+Status tab says why, and the bridge keeps trying until it's there. Unplugging
+the stick while it's running works the same way.
 
 ## Install
 
@@ -61,9 +63,8 @@ sudo journalctl -u waldmann-enocean | grep -A3 "password generated"
 
 Open `http://<host>:8099/`, log in and enter your MQTT broker under
 **Settings**. No command-line options are needed. The broker defaults to
-`127.0.0.1:1883` and everything else can be set in the UI. MQTT changes are
-applied right away, only changing the serial port or the web port needs a
-restart.
+`127.0.0.1:1883` and everything else can be set in the UI. Changes are applied
+right away, only changing the web port needs a restart.
 
 The web UI uses plain HTTP. That's fine on your own network, but put a reverse
 proxy with TLS in front of it if you want to reach it from outside.
