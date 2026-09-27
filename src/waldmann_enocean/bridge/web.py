@@ -15,9 +15,11 @@ main loop, which is the only thread allowed to transmit.
 from __future__ import annotations
 
 import base64
+import errno
 import json
 import logging
 import secrets
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -51,7 +53,7 @@ def _new_session() -> str:
     return token
 
 
-def make_handler(bridge: Bridge, config_path: Path):
+def make_handler(bridge: Bridge, config_path: Path, web: WebServer):
     class Handler(BaseHTTPRequestHandler):
         server_version = "waldmann-bridge"
         protocol_version = "HTTP/1.1"
@@ -302,26 +304,62 @@ def make_handler(bridge: Bridge, config_path: Path):
             # the MQTT password is write-only: only set when non-empty
             if data.get("mqtt_password"):
                 updates["mqtt_password"] = str(data["mqtt_password"])
+            moved = None
+            if "web_host" in updates or "web_port" in updates:
+                host = updates.get("web_host", config.web_host)
+                port = updates.get("web_port", config.web_port)
+                field = "web_port" if "web_port" in updates else "web_host"
+                try:
+                    moved = web.bind(host, port)
+                except OSError as exc:
+                    reason = {
+                        errno.EACCES: "can't be used: permission denied.",
+                        errno.EADDRINUSE: "is already in use.",
+                        errno.EADDRNOTAVAIL: "isn't an address of this machine.",
+                    }.get(exc.errno, f"can't be used: {exc.strerror or exc}.")
+                    return {"error": reason, "field": field}
             for key, new in updates.items():
                 setattr(config, key, new)
             changed = list(updates)
             config.save(config_path)
             bridge.note(f"configuration updated: {', '.join(changed) or 'no changes'}")
-            # MQTT and stick settings are applied live; only the web listener
-            # itself needs the service restarted.
             if any(k.startswith("mqtt_") or k in ("base_topic", "discovery_prefix")
                    for k in changed):
                 bridge.commands.put(("reconnect_mqtt", ()))
             if any(k in ("port", "baudrate") for k in changed):
                 bridge.commands.put(("reopen_stick", ()))
-            restart = any(k.startswith("web_") for k in changed)
-            return {"ok": True, "changed": changed, "restart_required": restart}
+            if moved is not None:
+                threading.Thread(target=web.move_to, args=(moved,), daemon=True).start()
+                return {"ok": True, "changed": changed, "moved_to": config.web_port}
+            return {"ok": True, "changed": changed}
 
     return Handler
 
 
-def serve(bridge: Bridge, config_path: Path) -> ThreadingHTTPServer:
-    handler = make_handler(bridge, config_path)
-    server = ThreadingHTTPServer((bridge.config.web_host, bridge.config.web_port), handler)
-    server.daemon_threads = True
-    return server
+class WebServer:
+    """The web UI's listener, which can move to another address while running."""
+
+    def __init__(self, bridge: Bridge, config_path: Path) -> None:
+        self.bridge = bridge
+        self.handler = make_handler(bridge, config_path, self)
+        self.server = self.bind(bridge.config.web_host, bridge.config.web_port)
+
+    def bind(self, host: str, port: int) -> ThreadingHTTPServer:
+        server = ThreadingHTTPServer((host, port), self.handler)
+        server.daemon_threads = True
+        return server
+
+    def start(self) -> None:
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        host, port = self.server.server_address[:2]
+        self.bridge.note(f"web UI on http://{host}:{port}/")
+
+    def move_to(self, server: ThreadingHTTPServer) -> None:
+        old, self.server = self.server, server
+        self.start()
+        time.sleep(5)  # until the page has followed
+        old.shutdown()
+        old.server_close()
+
+    def shutdown(self) -> None:
+        self.server.shutdown()

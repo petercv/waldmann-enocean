@@ -26,13 +26,12 @@ from __future__ import annotations
 
 import argparse
 import logging
-import threading
 from pathlib import Path
 
 from ..paths import default_config, default_store
 from .config import Config, ensure_password, set_password
 from .core import Bridge
-from .web import serve
+from .web import WebServer
 
 LOG = logging.getLogger("waldmann_enocean.bridge")
 
@@ -92,16 +91,15 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     bridge = Bridge(config, args.store)
-    server = serve(bridge, args.config)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    bridge.note(f"web UI on http://{config.web_host}:{config.web_port}/")
+    web = WebServer(bridge, args.config)
+    web.start()
 
     try:
         bridge.run()
     except KeyboardInterrupt:
         bridge.note("stopping")
     finally:
-        server.shutdown()
+        web.shutdown()
     return 0
 
 

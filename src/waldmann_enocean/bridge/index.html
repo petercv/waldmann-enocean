@@ -280,7 +280,7 @@ const CREDENTIAL_KEYS = ["web_username","web_current","web_new"];
 const GROUP_HINTS = {
   "Radio": "The EnOcean USB stick. Changes apply immediately.",
   "MQTT broker": "The broker Home Assistant uses. Changes apply immediately.",
-  "Web interface": "Where this page is served. Changes apply after a restart.",
+  "Web interface": "Where this page is served. Changes apply immediately.",
   "Sign-in": "Saving a new username or password signs out every session, including this one."
 };
 const LABELS = {
@@ -739,6 +739,7 @@ $('#save').onclick = async e => {
   const settings = dirty.filter(el => !CREDENTIAL_KEYS.includes(el.name));
   const credentials = dirty.filter(el => CREDENTIAL_KEYS.includes(el.name));
   const notes = [];
+  let moveTo = null;
 
   if (credentials.length && !value('web_current')) {
     say('Enter your current password to change the username or password.');
@@ -754,8 +755,15 @@ $('#save').onclick = async e => {
     }
     if (!r.ok) { say('Not saved.'); return; }
     if (r.changed.length)
-      notes.push('Saved ' + r.changed.map(k => LABELS[k] || k).join(', ') + '.' +
-                 (r.restart_required ? ' Restart the service to apply.' : ''));
+      notes.push('Saved ' + r.changed.map(k => LABELS[k] || k).join(', ') + '.');
+    if (r.moved_to) {
+      // behind a reverse proxy the browser's port isn't the bridge's, so stay
+      const url = new URL(location.href);
+      if ((url.port || (url.protocol === 'https:' ? '443' : '80')) === String(savedValues.web_port)) {
+        url.port = String(r.moved_to);
+        moveTo = url.href;
+      } else notes.push('The bridge now listens on port ' + r.moved_to + '.');
+    }
   }
   if (credentials.length) {
     const r = await api('/api/password', {username: value('web_username'),
@@ -769,10 +777,15 @@ $('#save').onclick = async e => {
       // The bridge has just dropped every session, this one included.
       say(notes.concat('Username or password changed. Sign in again.').join(' '));
       token = ''; store.clear();
-      setTimeout(() => location.reload(), 1500);
+      setTimeout(() => moveTo ? location.assign(moveTo) : location.reload(), 1500);
       return;
     }
     notes.push('Username and password unchanged.');
+  }
+  if (moveTo) {
+    say(notes.concat('Taking you to the new address, sign in again there.').join(' '));
+    setTimeout(() => location.assign(moveTo), 1500);
+    return;
   }
   say(notes.join(' ') || 'No changes.');
   await loadConfig();

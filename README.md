@@ -64,7 +64,7 @@ sudo journalctl -u waldmann-enocean | grep -A3 "password generated"
 Open `http://<host>:8099/`, log in and enter your MQTT broker under
 **Settings**. No command-line options are needed. The broker defaults to
 `127.0.0.1:1883` and everything else can be set in the UI. Changes are applied
-right away, only changing the web port needs a restart.
+right away.
 
 The web UI uses plain HTTP. That's fine on your own network, but put a reverse
 proxy with TLS in front of it if you want to reach it from outside.
