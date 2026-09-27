@@ -28,9 +28,11 @@ that queue, even something small like reading the Base ID.
 ## Home Assistant identifiers
 
 Home Assistant tracks entities by their discovery node name and `unique_id`
-(`waldmann_enocean_<id>_u<N>`). If you change `NODE_PREFIX` in `discovery.py`
-or the base topic, the existing entities are orphaned and you get duplicates
-next to them. Treat that as a breaking change.
+(`waldmann_enocean_<id>_u<N>`). If you change `NODE_PREFIX` in `discovery.py`,
+the existing entities are orphaned and you get duplicates next to them. Treat
+that as a breaking change. The base topic isn't part of either, so changing it
+only moves the state and command topics, and Home Assistant updates the
+existing entities.
 
 ## Re-reading state after a command
 

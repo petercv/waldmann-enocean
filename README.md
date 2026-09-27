@@ -202,9 +202,8 @@ waldmann-enocean/<id>/refresh/set       poll this luminaire now
 ```
 
 You can change the base topic in the settings, and the MQTT tab shows the
-actual topics for your luminaires. If you change the base topic after Home
-Assistant has picked up your luminaires, you'll end up with orphaned entities,
-see [docs/internals.md](https://github.com/petercv/waldmann-enocean/blob/main/docs/internals.md#home-assistant-identifiers).
+actual topics for your luminaires. Home Assistant keeps the same entities when
+you do, because their ids don't include the base topic.
 
 ## Where things are stored
 
