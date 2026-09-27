@@ -8,4 +8,4 @@ Two front ends on one protocol implementation:
 Not affiliated with, endorsed by, or supported by Waldmann GmbH & Co. KG.
 """
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
